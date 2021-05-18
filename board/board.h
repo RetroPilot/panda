@@ -18,6 +18,9 @@
 #else
   #include "boards/pedal.h"
 #endif
+#ifdef GATEWAY
+  #include "boards/gateway.h"
+#endif
 
 void detect_board_type(void) {
   #ifdef PANDA
@@ -45,9 +48,14 @@ void detect_board_type(void) {
       hw_type = HW_TYPE_PEDAL;
       current_board = &board_pedal;
     #else
+    #ifdef GATEWAY
+      hw_type = HW_TYPE_GATEWAY;
+      current_board = &board_gateway;
+    #else
       hw_type = HW_TYPE_UNKNOWN;
       puts("Hardware type is UNKNOWN!\n");
     #endif
+  #endif
   #endif
 }
 

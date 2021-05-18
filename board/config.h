@@ -8,8 +8,10 @@
 //#define DEBUG_FAULTS
 
 #ifdef STM32F4
-  #define PANDA
   #include "stm32f4xx.h"
+  #ifndef GATEWAY
+    #define PANDA
+  #endif
 #else
   #include "stm32f2xx.h"
 #endif

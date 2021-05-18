@@ -21,6 +21,38 @@ if os.getenv("PEDAL"):
     "-DPEDAL",
   ]
 
+if os.getenv("IBST"):
+  PROJECT = "panda"
+  STARTUP_FILE = "startup_stm32f413xx.s"
+  MAIN = "ibst/main.c"
+  PROJECT_FLAGS = [
+    "-mcpu=cortex-m4",
+    "-mhard-float",
+    "-DSTM32F4",
+    "-DSTM32F413xx",
+    "-mfpu=fpv4-sp-d16",
+    "-fsingle-precision-constant",
+    "-Os",
+    "-g",
+    "-DGATEWAY",
+  ]
+
+if os.getenv("SDSU"):
+  PROJECT = "panda"
+  STARTUP_FILE = "startup_stm32f413xx.s"
+  MAIN = "smart_dsu/main.c"
+  PROJECT_FLAGS = [
+    "-mcpu=cortex-m4",
+    "-mhard-float",
+    "-DSTM32F4",
+    "-DSTM32F413xx",
+    "-mfpu=fpv4-sp-d16",
+    "-fsingle-precision-constant",
+    "-Os",
+    "-g",
+    "-DGATEWAY",
+  ]
+
 else:
   PROJECT = "panda"
   STARTUP_FILE = "startup_stm32f413xx.s"
