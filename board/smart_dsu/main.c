@@ -51,7 +51,7 @@ void __initialize_hardware_early(void) {
 
 #ifdef TGW_USB
 
-#include "gateway/can.h"
+#include "smart_dsu/can.h"
 
 // ********************* usb debugging *********************
 // TODO: neuter this if we are not debugging
@@ -289,7 +289,7 @@ void CAN1_RX0_IRQ_Handler(void) {
         for (int i=0; i<8; i++) {
           dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
         }
-        if (dat[8] == toyota_checksum(address, dat, 8)){
+        if (dat[7] == toyota_checksum(address, dat, 8)){
           enable_acc = 1; // TODO: set this somewhere else.. 1D2? do we need this?
           acc_cmd = (dat[0] << 8U) | dat[1]; // ACC_CMD
           acc_cancel = (dat[3] & 1U);
@@ -308,7 +308,7 @@ void CAN1_RX0_IRQ_Handler(void) {
         for (int i=0; i<8; i++) {
           dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
         }
-        if (dat[8] == toyota_checksum(address, dat, 8)){
+        if (dat[7] == toyota_checksum(address, dat, 8)){
           // an emergency maneuver is being requested
           enable_aeb_control = 1;
           aeb_cmd = (dat[0] << 2U) | (dat[1] & 3U);
