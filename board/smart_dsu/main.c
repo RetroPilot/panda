@@ -233,6 +233,7 @@ bool send = 0;
 //------------- BUS 1 - PTCAN ------------//
 
 #define ACC_CTRL 0xF10
+#define ACC_CTRL_OP 0x343
 bool enable_acc = 0;
 int acc_cmd = 0;
 
@@ -282,6 +283,7 @@ void CAN1_RX0_IRQ_Handler(void) {
           }
         }
         break;
+      case ACC_CTRL_OP: // hack to allow the firmware to support stock OP
       case ACC_CTRL:
         // send this EXACTLY how ACC_CONTROL is sent
         for (int i=0; i<8; i++) {
