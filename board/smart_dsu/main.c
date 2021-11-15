@@ -235,6 +235,7 @@ bool send = 0;
 #define ACC_CTRL 0xF10
 #define ACC_CTRL_OP 0x343
 bool enable_acc = 0;
+bool op_ctrl_mode = 0;
 int acc_cmd = 0;
 
 #define AEB_CTRL 0xF11
@@ -284,6 +285,9 @@ void CAN1_RX0_IRQ_Handler(void) {
         }
         break;
       case ACC_CTRL_OP: // hack to allow the firmware to support stock OP
+        to_fwd.RIR &= 0xFFFFFFFE; // do not fwd
+        op_ctrl_mode = 1;
+        break;
       case ACC_CTRL:
         // send this EXACTLY how ACC_CONTROL is sent
         for (int i=0; i<8; i++) {
@@ -388,38 +392,44 @@ void CAN3_RX0_IRQ_Handler(void) {
 
     switch (address) {
       case DSU_ACC_CONTROL: // ACC_CTRL
-        for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
-        }
-        if(dat[7] == toyota_checksum(address, dat, 8)) {
-          // add permit_braking and recompute the checksum
-          dat[2] &= 0x3F; // mask off the top 2 bits
-          dat[2] |= (1 << 6U); // SET_ME_X01
-          dat[3] |= (1 << 6U); // permit_braking
-          dat[7] = toyota_checksum(address, dat, 8); 
-          if (enable_acc){ 
-            // modify this before sending to the car only if requested
-            dat[0] = (acc_cmd >> 8U);
-            dat[1] = (acc_cmd & 0xFF);
+        if (op_ctrl_mode){
+          to_fwd.RIR &= 0xFFFFFFFE; // do not fwd
+          // op_ctrl_mode = 0; 
+          // for now, just set this flag until the next reboot
+        } else { 
+          for (int i=0; i<8; i++) {
+            dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
           }
-          to_fwd.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-          to_fwd.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
-          // reset the timer for seeing the DSU
-          timeout = 0;
-          state = NO_FAULT;
-        } else {
-          // bad checksum
-          state = FAULT_BAD_CHECKSUM;
-          #ifdef DEBUG_CAN
-            for(int ii = 0; ii<8; ii++){ 
-              puth2(dat[ii]);
+          if(dat[7] == toyota_checksum(address, dat, 8)) {
+            // add permit_braking and recompute the checksum
+            dat[2] &= 0x3F; // mask off the top 2 bits
+            dat[2] |= (1 << 6U); // SET_ME_X01
+            dat[3] |= (1 << 6U); // permit_braking
+            dat[7] = toyota_checksum(address, dat, 8); 
+            if (enable_acc){ 
+              // modify this before sending to the car only if requested
+              dat[0] = (acc_cmd >> 8U);
+              dat[1] = (acc_cmd & 0xFF);
             }
-            puts("\n expected: ");
-            puth2(toyota_checksum(address, dat, 8));
-            puts(" got: ");
-            puth2(dat[7]);
-            puts("\n");
-          #endif
+            to_fwd.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
+            to_fwd.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
+            // reset the timer for seeing the DSU
+            timeout = 0;
+            state = NO_FAULT;
+          } else {
+            // bad checksum
+            state = FAULT_BAD_CHECKSUM;
+            #ifdef DEBUG_CAN
+              for(int ii = 0; ii<8; ii++){ 
+                puth2(dat[ii]);
+              }
+              puts("\n expected: ");
+              puth2(toyota_checksum(address, dat, 8));
+              puts(" got: ");
+              puth2(dat[7]);
+              puts("\n");
+            #endif
+          }
         }
         break;
       case DSU_AEB_CMD: // AEB BRAKING
