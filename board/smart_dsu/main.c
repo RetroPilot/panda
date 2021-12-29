@@ -233,7 +233,6 @@ bool send = 0;
 //------------- BUS 1 - PTCAN ------------//
 
 #define ACC_CTRL 0xF10
-#define ACC_CTRL_OP 0x343
 bool enable_acc = 0;
 bool op_ctrl_mode = 0;
 int acc_cmd = 0;
@@ -284,9 +283,11 @@ void CAN1_RX0_IRQ_Handler(void) {
           }
         }
         break;
-      case ACC_CTRL_OP: // hack to allow the firmware to support stock OP
+      case DSU_ACC_CONTROL: // hack to allow the firmware to support stock OP
         to_fwd.RIR &= 0xFFFFFFFE; // do not fwd
         op_ctrl_mode = 1;
+        // reset timer for op_ctrl_mode
+        TIM2->CNT = 0;
         break;
       case ACC_CTRL:
         // send this EXACTLY how ACC_CONTROL is sent
@@ -531,6 +532,12 @@ void TIM3_IRQ_Handler(void) {
     timeout_f11 += 1U;
   }
   TIM3->SR = 0;
+
+  // check TIM2 for op_ctrl_mode timer
+  uint32_t op_ts = TIM2->CNT;
+  if (op_ts > 100000){
+    op_ctrl_mode = 0;
+  }
 
 #ifdef DEBUG_CTRL
 puts("enable_acc: ");
