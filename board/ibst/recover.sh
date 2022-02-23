@@ -4,7 +4,7 @@ set -e
 DFU_UTIL="dfu-util"
 
 cd ..
-IBST=1 scons -u
+GATEWAY=1 IBST=1 scons -u
 cd ibst
 
 $DFU_UTIL -d 0483:df11 -a 0 -s 0x08004000 -D ../obj/panda.bin.signed

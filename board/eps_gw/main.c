@@ -21,10 +21,10 @@
 #include "crc.h"
 
 // uncomment for usb debugging via debug_console.py
-#define IBST_USB
+#define EPS_GW_USB
 #define DEBUG
 
-#ifdef IBST_USB
+#ifdef EPS_GW_USB
   #include "drivers/uart.h"
   #include "drivers/usb.h"
 #else
@@ -48,9 +48,9 @@ void __initialize_hardware_early(void) {
   early();
 }
 
-#ifdef IBST_USB
+#ifdef EPS_GW_USB
 
-#include "ibst/can.h"
+#include "eps_gw/can.h"
 
 // ********************* usb debugging *********************
 void debug_ring_callback(uart_ring *ring) {
@@ -181,8 +181,9 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 #endif
 
 // ***************************** can port *****************************
-#define CAN_UPDATE  0x341 //bootloader
+#define CAN_UPDATE  0x23F //bootloader
 #define COUNTER_CYCLE 0xFU
+#define LKA_COUNTER_CYCLE = 0x3FU
 
 void CAN1_TX_IRQ_Handler(void) {
   process_can(0);
@@ -199,51 +200,48 @@ void CAN3_TX_IRQ_Handler(void) {
 
 bool sent;
 
+// Toyota Checksum algorithm
+uint8_t toyota_checksum(int addr, uint8_t *dat, int len){
+  int cksum = 0;
+  for(int ii = 0; ii < (len - 1); ii++){
+    cksum = (cksum + dat[ii]); 
+  }
+  cksum += len;
+  cksum += ((addr >> 8U) & 0xFF); // idh
+  cksum += ((addr) & 0xFF); // idl
+  return cksum & 0xFF;
+}
+
 // OUTPUTS
-// 0x38B
-#define P_EST_MAX 0
-#define P_EST_MAX_QF 1
-#define VEHICLE_QF 1
-#define IGNITION_ON 0
-uint8_t current_speed = 0;
+//---------------------------------
+#define LKA_INPUT 0x2E4
+uint16_t torque_req = 0;
+uint8_t lka_counter = 0;
+bool lka_req = 0;
+uint8_t lka_checksum = 0;
 
-// 0x38C
-#define P_LIMIT_EXTERNAL 120
-#define Q_TARGET_DEFAULT 0x7e00 // this is the zero point
-uint16_t q_target_ext = Q_TARGET_DEFAULT;
-bool q_target_ext_qf = 0;
-
-// 0x38D
-#define P_TARGET_DRIVER 0
-#define P_TARGET_DRIVER_QF 0
-#define ABS_ACTIVE 0
-#define P_MC 0
-#define P_MC_QF 1
+#define CAN_ID 0x22F
+bool eps_ok = 0;
 
 // INPUTS
+//---------------------------------
+#define CAN_INPUT 0x22E
+uint8_t mode = 0;
 uint16_t rel_input = 0;
 uint16_t pos_input = 0;
-bool pid_enable = 0;
-bool rel_enable = 0;
 
-// 0x38E
-uint16_t output_rod_target = 0;
-bool driver_brake_applied = 0;
-bool brake_applied = 0;
-bool brake_ok = 0;
+#define STEER_TORQUE_SENSOR 0x260
+uint16_t steer_torque_driver = 0;
+uint16_t steer_torque_eps = 0;
+bool steer_override = 0;
 
-// 0x38F
-uint8_t ibst_status;
-uint8_t ext_req_status;
+#define EPS_STATUS 0x262
+uint8_t lka_state = 0;
 
 // COUNTERS
 uint8_t can1_count_out = 0;
 uint8_t can1_count_in;
-uint8_t can2_count_out_1 = 0;
-uint8_t can2_count_out_2 = 0;
-uint8_t can2_count_in_1;
-uint8_t can2_count_in_2;
-uint8_t can2_count_in_3;
+uint8_t can2_count_out = 0;
 
 #define MAX_TIMEOUT 50U
 uint32_t timeout = 0;
@@ -258,29 +256,6 @@ uint32_t timeout = 0;
 #define FAULT_COUNTER 7U
 
 uint8_t state = FAULT_STARTUP;
-
-#define NO_EXTFAULT1 0U
-#define EXTFAULT1_CHECKSUM1 1U
-#define EXTFAULT1_CHECKSUM2 2U
-#define EXTFAULT1_CHECKSUM3 3U
-#define EXTFAULT1_SCE 4U
-#define EXTFAULT1_COUNTER1 5U
-#define EXTFAULT1_COUNTER2 6U
-#define EXTFAULT1_COUNTER3 7U
-#define EXTFAULT1_TIMEOUT 8U
-#define EXTFAULT1_SEND1 9U
-#define EXTFAULT1_SEND2 10U
-#define EXTFAULT1_SEND3 11U
-
-uint8_t can2state = NO_EXTFAULT1;
-
-#define NO_EXTFAULT2 0U
-#define EXTFAULT2_CHECKSUM1 1U
-#define EXTFAULT2_CHECKSUM2 2U
-#define EXTFAULT2_SCE 3U
-#define EXTFAULT2_COUNTER1 4U
-#define EXTFAULT2_COUNTER2 5U
-#define EXTFAULT2_TIMEOUT 6U
 
 const uint8_t crc_poly = 0x1D;  // standard crc8 SAE J1850
 uint8_t crc8_lut_1d[256];
@@ -307,9 +282,7 @@ void CAN1_RX0_IRQ_Handler(void) {
           }
         }
         break;
-      case 0x20E: ;
-        //uint64_t data; //sendESP_private2
-        //uint8_t *dat = (uint8_t *)&data;
+      case CAN_INPUT: ;
         uint8_t dat[6];
         for (int i=0; i<6; i++) {
           dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
@@ -318,10 +291,16 @@ void CAN1_RX0_IRQ_Handler(void) {
         if(dat[0] == lut_checksum(dat, 6, crc8_lut_1d)) {
           if (((can1_count_in + 1U) & COUNTER_CYCLE) == index) {
             //if counter and checksum valid accept commands
-            pid_enable = ((dat[1] >> 5U) & 1U);
-            rel_enable = ((dat[1] >> 4U) & 1U);
-            pos_input = ((dat[5] & 0xFU) << 8U) | dat[4];
-            rel_input = ((dat[3] << 8U) | dat[2]);
+            mode = ((dat[1] >> 4U) & 3U);
+            if (mode != 0){
+              lka_req = 1;
+            } else {
+              lka_req = 0;
+            }
+            pos_input = ((dat[3] & 0xFU) << 8U) | dat[2];
+            rel_input = ((dat[5] << 8U) | dat[4]);
+            // TODO: safety? scaling?
+            torque_req = rel_input;
             can1_count_in++;
           }
           else {
@@ -332,7 +311,7 @@ void CAN1_RX0_IRQ_Handler(void) {
         }
         else {
           state = FAULT_BAD_CHECKSUM;
-          puts("checksum fail 0x20E \n");
+          puts("checksum fail 0x22E \n");
           puts("DATA: ");
           for(int ii = 0; ii < 6; ii++){
             puth2(dat[ii]);
@@ -345,28 +324,6 @@ void CAN1_RX0_IRQ_Handler(void) {
           puts("\n");
         }
         break;
-      case 0x366: ;
-        uint8_t dat2[4];
-        for (int i=0; i<4; i++) {
-          dat2[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
-        }
-        if(dat2[0] == lut_checksum(dat2, 4, crc8_lut_1d)) {
-          current_speed = dat2[3];
-        }
-        else {
-          state = FAULT_BAD_CHECKSUM;
-          puts("checksum fail 0x366 \n");
-          puts("DATA: ");
-          for(int ii = 0; ii < 4; ii++){
-            puth2(dat2[ii]);
-          }
-          puts("\n");
-          puts("expected: ");
-          puth2(lut_checksum(dat2, 4, crc8_lut_1d));
-          puts(" got: ");
-          puth2(dat2[0]);
-          puts("\n");
-        }
       default: ;
     }
     can_rx(0);
@@ -388,75 +345,9 @@ void CAN2_RX0_IRQ_Handler(void) {
     puts("CAN2 RX: ");
     puth(address);
     puts("\n");
+    #else
+    UNUSED(address);
     #endif
-    switch (address) {
-    /*  case 0x391:
-        uint8_t dat[5];
-        for (int i=0; i<5; i++) {
-          dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
-        }
-        uint64_t *data = (uint8_t *)&dat;
-        uint8_t index = dat[6] & COUNTER_CYCLE;
-        if(dat[0] = lut_checksum(dat, 8, crc8_lut_1d)) {
-          if (((can2_count_in1 + 1U) & COUNTER_CYCLE) == index) {
-            //if counter and checksum valid accept commands
-            ebr_mode = (dat[1] >> 4) & 0x7;
-            ebr_system_mode = (data >> 15) & 0x7;
-            can2_count_in1++;
-          }
-          else {
-            state = EXTFAULT1_COUNTER1;
-          }
-        }
-        else {
-          state = EXTFAULT1_CHECKSUM1;
-        }
-        break;*/
-      case 0x38E: ;
-        uint8_t dat[8]; //IBST_private1
-        for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN2->sFIFOMailBox[0], i);
-        }
-        uint8_t index = dat[1] & COUNTER_CYCLE;
-        if(dat[0] == lut_checksum(dat, 8, crc8_lut_1d)) {
-          if (((can2_count_in_1 + 1U) & COUNTER_CYCLE) == index) {
-            //if counter and checksum valid accept commands
-            output_rod_target = ((dat[4] & 0xFU) << 8U) | dat[3];
-            can2_count_in_1++;
-          }
-          else {
-            can2state = EXTFAULT1_COUNTER2;
-          }
-        }
-        else {
-          can2state = EXTFAULT1_CHECKSUM2;
-        }
-        break;
-      case 0x38F: ;
-        uint64_t data2; //IBST_private2
-        uint8_t *dat2 = (uint8_t *)&data2;
-        for (int i=0; i<8; i++) {
-          dat2[i] = GET_BYTE(&CAN2->sFIFOMailBox[0], i);
-        }
-        uint8_t index2 = dat2[1] & COUNTER_CYCLE;
-        if(dat2[0] == lut_checksum(dat2, 8, crc8_lut_1d)) {
-          if (((can2_count_in_3 + 1U) & COUNTER_CYCLE) == index2) {
-            //if counter and checksum valid accept commands
-            ibst_status = (data2 >> 19) & 0x7;
-            driver_brake_applied = ((dat2[2] & 0x1) | (!((dat2[2] >> 1) & 0x1))); //Sends brake applied if ibooster says brake applied or if there's a fault with the brake sensor, assumes worst case scenario
-            brake_applied = (driver_brake_applied | (output_rod_target > 0x23FU));
-            can2_count_in_3++;
-          }
-          else {
-            can2state = EXTFAULT1_COUNTER3;
-          }
-        }
-        else {
-          can2state = EXTFAULT1_CHECKSUM3;
-        }
-        break;
-      default: ;
-    }
     // next
     can_rx(1);
   }
@@ -472,13 +363,39 @@ void CAN3_RX0_IRQ_Handler(void) {
   while ((CAN3->RF0R & CAN_RF0R_FMP0) != 0) {
     uint16_t address = CAN3->sFIFOMailBox[0].RIR >> 21;
     #ifdef DEBUG_CAN
-    puts("CAN1 RX: ");
+    puts("CAN3 RX: ");
     puth(address);
     puts("\n");
-    #else
-    UNUSED(address);
     #endif
-
+    switch (address) {
+      case STEER_TORQUE_SENSOR: ;
+        uint8_t dat[8];
+        for (int i=0; i<8; i++) {
+          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+        }
+        if(dat[7] == toyota_checksum(address, dat, 8)) {
+          steer_override = dat[0] & 1U;
+          steer_torque_driver = (dat[1] << 8U) | dat[2];
+          steer_torque_eps = (dat[5] << 8U) | dat[6];
+        }
+        else {
+          state = FAULT_BAD_CHECKSUM;
+        }
+        break;
+      case EPS_STATUS: ;
+        uint8_t dat2[5];
+        for (int i=0; i<5; i++) {
+          dat2[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+        }
+        if(dat2[4] == toyota_checksum(address, dat2, 5)) {
+          lka_state = dat2[3] >> 1U;
+        }
+        else {
+          state = FAULT_BAD_CHECKSUM;
+        }
+        break;
+      default: ;
+    }
     // next
     can_rx(2);
   }
@@ -490,25 +407,6 @@ void CAN3_SCE_IRQ_Handler(void) {
   llcan_clear_send(CAN3);
 }
 
-// q_target_ext values
-// 7e00 max rod return
-// 8200 max brake.. TODO: check this?
-
-// position values
-// BC0 max rod position (3008)
-// EC0 min rod position (-320)
-
-#define P 2 // brake_rel is 2x brake_pos scale
-#define I 0
-#define D 0
-
-#define OUTMAX 0x9200  //+-40ml/s
-#define OUTMIN 0x6A00
-
-uint16_t last_input;
-int32_t output_sum;
-int16_t error;
-
 int to_signed(int d, int bits) {
   int d_signed = d;
   if (d >= (1 << MAX((bits - 1), 0))) {
@@ -518,162 +416,49 @@ int to_signed(int d, int bits) {
 }
 
 void TIM3_IRQ_Handler(void) {
-
-  if(pid_enable & !rel_enable) { //run PID loop
-    q_target_ext_qf = 1;
-
-    int q_target_out = Q_TARGET_DEFAULT; // this value is the zero point.
-
-    error = to_signed(pos_input, 16) - to_signed(output_rod_target, 16); // position error
-    q_target_out += (error * P);
-
-    if (q_target_out > OUTMAX){
-      q_target_out = OUTMAX;
-    }
-
-    if (q_target_out < OUTMIN){
-      q_target_out = OUTMIN;
-    }
-
-    q_target_ext = q_target_out;
-
-  }
-
-  if (rel_enable && !pid_enable) { //relative mode
-    q_target_ext_qf = 1;
-    q_target_ext = rel_input;
-  }
-
-  if ((!rel_enable && !pid_enable) || (rel_enable && pid_enable)){ //both are 0 or both are 1
-    q_target_ext_qf = 0;
-    q_target_ext = Q_TARGET_DEFAULT;
-    rel_enable = 0;
-    pid_enable = 0;
-    state = FAULT_INVALID;
-  }
-
-  if (brake_applied) { // handle relay
-    set_gpio_output(GPIOB, 13, 1);
-  } else {
-    set_gpio_output(GPIOB, 13, 0);
-  }
-
-  if (driver_brake_applied){ // reset values
-    q_target_ext_qf = 0;
-    q_target_ext = Q_TARGET_DEFAULT;
-  }
-
   // cmain loop for sending 100hz messages
+
   if ((CAN2->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[8]; //sendESP_private3
-    uint16_t pTargetDriver = P_TARGET_DRIVER * 4;
-    dat[2] = pTargetDriver & 0xFFU;
-    dat[3] = (pTargetDriver & 0x3U) >> 8;
-    dat[4] = 0x0;
-    dat[5] = 0x0;
-    dat[6] = (uint8_t) P_MC_QF << 5;
-    dat[7] = 0x0;
-    dat[1] = can2_count_out_1;
-    dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
-
-    CAN_FIFOMailBox_TypeDef to_send;
-    to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
-    to_send.RDTR = 8;
-    to_send.RIR = (0x38D << 21) | 1U;
-    can_send(&to_send, 1, false);
-
-  }
-  else {
-    // old can packet hasn't sent!
-    state = EXTFAULT1_SEND1;
-    #ifdef DEBUG_CAN
-      puts("CAN2 MISS1\n");
-    #endif
-  }
-  if ((CAN2->TSR & CAN_TSR_TME1) == CAN_TSR_TME1) {
-    uint8_t dat[8]; //sendESP_private2
-    uint16_t p_limit_external = P_LIMIT_EXTERNAL * 2;
-
-    dat[1] = can2_count_out_1 & COUNTER_CYCLE;
-    dat[2] = p_limit_external & 0xFF;
-    dat[3] = ((p_limit_external >> 8U) & 0x1U) | (q_target_ext & 0xFU) << 4U;
-    dat[4] = (q_target_ext >> 4U) & 0xFF;
-    dat[5] = ((q_target_ext >> 12U) & 0xFU) | (q_target_ext_qf << 4U); // what is ESP_diagnosticESP?
-    dat[6] = 0x00;
-    dat[7] = 0x00;
-    dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
-
-    CAN_FIFOMailBox_TypeDef to_send;
-    to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
-    to_send.RDTR = 8;
-    to_send.RIR = (0x38C << 21) | 1U;
-    can_send(&to_send, 1, false);;
-
-    can2_count_out_1++;
-    can2_count_out_1 &= COUNTER_CYCLE;
-
-  }
-  else {
-    // old can packet hasn't sent!
-    state = EXTFAULT1_SEND2;
-    #ifdef DEBUG_CAN
-      puts("CAN2 MISS2\n");
-    #endif
-  }
-  if (!sent){
-    if ((CAN2->TSR & CAN_TSR_TME2) == CAN_TSR_TME2) {
-      uint8_t dat[8]; //sendESP_private1 every 20ms
-      uint16_t ESP_vehicleSpeed = (((current_speed*16) / 9) & 0x3FFF);
-
-      dat[1] = can2_count_out_2 & COUNTER_CYCLE;
-      dat[2] = P_EST_MAX;
-      dat[3] = P_EST_MAX_QF | (ESP_vehicleSpeed & 0x3FU);
-      dat[4] = (ESP_vehicleSpeed >> 6U) & 0xFF;
-      dat[5] = VEHICLE_QF | (IGNITION_ON << 3U);
-      dat[6] = 0x00;
-      dat[7] = 0x00;
-      dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
-
-      CAN_FIFOMailBox_TypeDef to_send;
-      to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-      to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
-      to_send.RDTR = 8;
-      to_send.RIR = (0x38B << 21) | 1U;
-      can_send(&to_send, 1, false);
-
-      can2_count_out_2++;
-      can2_count_out_2 &= COUNTER_CYCLE;
-
-    }
-    else {
-      // old can packet hasn't sent!
-      state = EXTFAULT1_SEND3;
-      #ifdef DEBUG_CAN
-        puts("CAN2 MISS3\n");
-      #endif
-    }
-  }
-  sent = !sent;
-
-
-  //send to EON
-  if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[5];
-    brake_ok = (ibst_status == 0x7);
-
-    dat[4] = (can2state & 0xFU) << 4;
-    dat[3] = (output_rod_target >> 8U) & 0x3FU;
-    dat[2] = (brake_ok) | (driver_brake_applied << 1U) | (brake_applied << 2U) | (output_rod_target & 0x3FU);
-    dat[1] = ((state & 0xFU) << 4) | can1_count_out;
-    dat[0] = lut_checksum(dat, 5, crc8_lut_1d);
+    uint8_t dat[8]; // LKA_INPUT
+    dat[0] = (1 << 7U) | (can2_count_out << 1U) | lka_req;
+    dat[1] = (torque_req >> 8U);
+    dat[2] = (torque_req & 0xFF);
+    dat[3] = 0x0;
+    dat[4] = toyota_checksum(LKA_INPUT, dat, 5);
 
     CAN_FIFOMailBox_TypeDef to_send;
     to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
     to_send.RDHR = dat[4];
     to_send.RDTR = 5;
-    to_send.RIR = (0x20F << 21) | 1U;
+    to_send.RIR = (LKA_INPUT << 21) | 1U;
+    can_send(&to_send, 2, false);
+
+  }
+  else {
+    // old can packet hasn't sent!
+    state = FAULT_SEND;
+    #ifdef DEBUG_CAN
+      puts("CAN2 MISS1\n");
+    #endif
+  }
+
+  //send to EON
+  if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
+    uint8_t dat[7];
+
+    dat[6] = (steer_torque_eps & 0xFF);
+    dat[5] = (steer_torque_eps >> 8U);
+    dat[4] = (steer_torque_driver & 0xFF);
+    dat[3] = (steer_torque_driver >> 8U);
+    dat[2] = eps_ok;
+    dat[1] = ((state & 0xFU) << 4) | can1_count_out;
+    dat[0] = lut_checksum(dat, 7, crc8_lut_1d);
+
+    CAN_FIFOMailBox_TypeDef to_send;
+    to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
+    to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16);
+    to_send.RDTR = 7;
+    to_send.RIR = (CAN_ID << 21) | 1U;
     can_send(&to_send, 0, false);
 
     can1_count_out++;
@@ -694,29 +479,16 @@ void TIM3_IRQ_Handler(void) {
   // up timeout for gas set
   if (timeout == MAX_TIMEOUT) {
     state = FAULT_TIMEOUT;
-    q_target_ext_qf = 0;
-    q_target_ext = Q_TARGET_DEFAULT;
-    pid_enable = 0;
-    rel_enable = 0;
+    torque_req = 0;
+    mode = 0;
   } else {
     timeout += 1U;
   }
 
   #ifdef DEBUG
   puts("MODE: ");
-  puth((pid_enable << 1U) | rel_enable);
-  puts(" BRAKE_REQ: ");
-  if (((pid_enable << 1U) | rel_enable) == 2){
-    puth(pos_input);
-    puts(" BRAKE_POS_ERR: ");
-    puth(error);
-  } else {
-    puth(q_target_ext_qf);
-  }
-  puts(" BRAKE_POS: ");
-  puth(output_rod_target);
-  puts(" Q_TARGET_EXT: ");
-  puth(q_target_ext);
+  puth(mode << 1U);
+  puts(" EPS: ");
   puts("\n");
   #endif
 }
@@ -758,7 +530,7 @@ int main(void) {
   // init board
   current_board->init();
   // enable USB
-  #ifdef IBST_USB
+  #ifdef EPS_GW_USB
   USBx->GOTGCTL |= USB_OTG_GOTGCTL_BVALOVAL;
   USBx->GOTGCTL |= USB_OTG_GOTGCTL_BVALOEN;
   usb_init();
@@ -791,14 +563,10 @@ int main(void) {
   timer_init(TIM3, 7);
   NVIC_EnableIRQ(TIM3_IRQn);
 
-  // power on ibooster. needs to power on AFTER sending CAN to prevent ibst state from being 4
+  // power on EPS
   set_gpio_mode(GPIOB, 12, MODE_OUTPUT);
   set_gpio_output_type(GPIOB, 12, OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output(GPIOB, 12, 1);
-
-  //Brake switch relay
-  set_gpio_mode(GPIOB, 13, MODE_OUTPUT);
-  set_gpio_output_type(GPIOB, 13, OUTPUT_TYPE_PUSH_PULL);
 
   watchdog_init();
 
