@@ -137,7 +137,8 @@ uint32_t current_index = 0;
 #define FAULT_INVALID 6U
 uint8_t state = FAULT_STARTUP;
 
-const uint8_t crc_poly = 0xD5;  // standard crc8
+const uint8_t crc_poly = 0x1D;  // standard crc8
+uint8_t crc8_lut_1d[256];
 
 void CAN1_RX0_IRQ_Handler(void) {
   while ((CAN->RF0R & CAN_RF0R_FMP0) != 0) {
@@ -160,15 +161,15 @@ void CAN1_RX0_IRQ_Handler(void) {
       }
 
       // normal packet
-      uint8_t dat[8];
-      for (int i=0; i<8; i++) {
+      uint8_t dat[6];
+      for (int i=0; i<6; i++) {
         dat[i] = GET_BYTE(&CAN->sFIFOMailBox[0], i);
       }
-      uint16_t value_0 = (dat[0] << 8) | dat[1];
-      uint16_t value_1 = (dat[2] << 8) | dat[3];
-      bool enable = ((dat[4] >> 7) & 1U) != 0U;
-      uint8_t index = dat[4] & COUNTER_CYCLE;
-      if (crc_checksum(dat, CAN_GAS_SIZE - 1, crc_poly) == dat[5]) {
+      uint16_t value_0 = (dat[2] << 8) | dat[1];
+      uint16_t value_1 = (dat[4] << 8) | dat[3];
+      bool enable = ((dat[5] >> 7) & 1U) != 0U;
+      uint8_t index = dat[5] & COUNTER_CYCLE;
+      if (dat[0] == lut_checksum(dat, CAN_GAS_SIZE, crc8_lut_1d)) {
         if (((current_index + 1U) & COUNTER_CYCLE) == index) {
           #ifdef DEBUG
             puts("setting gas ");
@@ -225,13 +226,13 @@ void TIM3_IRQ_Handler(void) {
 
   // check timer for sending the user pedal and clearing the CAN
   if ((CAN->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[8];
-    dat[0] = (pdl0 >> 8) & 0xFFU;
+    uint8_t dat[6];
     dat[1] = (pdl0 >> 0) & 0xFFU;
-    dat[2] = (pdl1 >> 8) & 0xFFU;
+    dat[2] = (pdl0 >> 8) & 0xFFU;
     dat[3] = (pdl1 >> 0) & 0xFFU;
-    dat[4] = ((state & 0xFU) << 4) | pkt_idx;
-    dat[5] = crc_checksum(dat, CAN_GAS_SIZE - 1, crc_poly);
+    dat[4] = (pdl1 >> 8) & 0xFFU;
+    dat[5] = ((state & 0xFU) << 4) | pkt_idx;
+    dat[0] = lut_checksum(dat, CAN_GAS_SIZE, crc8_lut_1d);
     CAN->sTxMailBox[0].TDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
     CAN->sTxMailBox[0].TDHR = dat[4] | (dat[5] << 8);
     CAN->sTxMailBox[0].TDTR = 6;  // len of packet is 5
@@ -323,6 +324,7 @@ int main(void) {
   timer_init(TIM3, 15);
   NVIC_EnableIRQ(TIM3_IRQn);
 
+  gen_crc_lookup_table(crc_poly, crc8_lut_1d);
   watchdog_init();
 
   puts("**** INTERRUPTS ON ****\n");

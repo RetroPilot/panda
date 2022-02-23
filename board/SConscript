@@ -21,7 +21,7 @@ if os.getenv("PEDAL"):
     "-DPEDAL",
   ]
 
-if os.getenv("GATEWAY"):
+elif os.getenv("GATEWAY"):
   PROJECT = "panda"
   STARTUP_FILE = "startup_stm32f413xx.s"
   if os.getenv("IBST"):
