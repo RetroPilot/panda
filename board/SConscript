@@ -8,10 +8,13 @@ PC = not (EON or TICI)
 PREFIX = "arm-none-eabi-"
 BUILDER = "DEV"
 
-if os.getenv("PEDAL"):
+if os.getenv("PEDAL") or os.getenv("THROTTLE_ACTUATOR"):
   PROJECT = "pedal"
   STARTUP_FILE = "startup_stm32f205xx.s"
-  MAIN = "pedal/main.c"
+  if os.getenv("PEDAL"):
+    MAIN = "pedal/main.c"
+  if os.getenv("THROTTLE_ACTUATOR"):
+    MAIN = "throttle_actuator/main.c"
   PROJECT_FLAGS = [
     "-mcpu=cortex-m3",
     "-msoft-float",
