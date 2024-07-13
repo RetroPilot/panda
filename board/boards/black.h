@@ -81,16 +81,16 @@ void black_set_gps_mode(uint8_t mode) {
   switch (mode) {
     case GPS_DISABLED:
       // GPS OFF
-      set_gpio_output(GPIOC, 14, 0);
+      set_gpio_output(GPIOC, 12, 0);
       set_gpio_output(GPIOC, 5, 0);
       break;
     case GPS_ENABLED:
       // GPS ON
-      set_gpio_output(GPIOC, 14, 1);
+      set_gpio_output(GPIOC, 12, 1);
       set_gpio_output(GPIOC, 5, 1);
       break;
     case GPS_BOOTMODE:
-      set_gpio_output(GPIOC, 14, 1);
+      set_gpio_output(GPIOC, 12, 1);
       set_gpio_output(GPIOC, 5, 0);
       break;
     default:
@@ -127,39 +127,9 @@ void black_set_can_mode(uint8_t mode){
   }
 }
 
-void black_usb_power_mode_tick(uint32_t uptime){
-  UNUSED(uptime);
-  // Not applicable
-}
-
 bool black_check_ignition(void){
   // ignition is checked through harness
   return harness_check_ignition();
-}
-
-uint32_t black_read_current(void){
-  // No current sense on black panda
-  return 0U;
-}
-
-void black_set_ir_power(uint8_t percentage){
-  UNUSED(percentage);
-}
-
-void black_set_fan_power(uint8_t percentage){
-  UNUSED(percentage);
-}
-
-void black_set_phone_power(bool enabled){
-  UNUSED(enabled);
-}
-
-void black_set_clock_source_mode(uint8_t mode){
-  UNUSED(mode);
-}
-
-void black_set_siren(bool enabled){
-  UNUSED(enabled);
 }
 
 void black_init(void) {
@@ -198,6 +168,9 @@ void black_init(void) {
   // Initialize harness
   harness_init();
 
+  // Initialize RTC
+  rtc_init();
+
   // Enable CAN transceivers
   black_enable_can_transceivers(true);
 
@@ -213,9 +186,6 @@ void black_init(void) {
   if (car_harness_status == HARNESS_STATUS_FLIPPED) {
     can_flip_buses(0, 2);
   }
-
-  // init multiplexer
-  can_set_obd(car_harness_status, false);
 }
 
 const harness_configuration black_harness_config = {
@@ -235,6 +205,11 @@ const harness_configuration black_harness_config = {
 const board board_black = {
   .board_type = "Black",
   .harness_config = &black_harness_config,
+  .has_gps = true,
+  .has_hw_gmlan = false,
+  .has_obd = true,
+  .has_lin = false,
+  .has_rtc_battery = false,
   .init = black_init,
   .enable_can_transceiver = black_enable_can_transceiver,
   .enable_can_transceivers = black_enable_can_transceivers,
@@ -242,12 +217,12 @@ const board board_black = {
   .set_usb_power_mode = black_set_usb_power_mode,
   .set_gps_mode = black_set_gps_mode,
   .set_can_mode = black_set_can_mode,
-  .usb_power_mode_tick = black_usb_power_mode_tick,
+  .usb_power_mode_tick = unused_usb_power_mode_tick,
   .check_ignition = black_check_ignition,
-  .read_current = black_read_current,
-  .set_fan_power = black_set_fan_power,
-  .set_ir_power = black_set_ir_power,
-  .set_phone_power = black_set_phone_power,
-  .set_clock_source_mode = black_set_clock_source_mode,
-  .set_siren = black_set_siren
+  .read_current = unused_read_current,
+  .set_fan_power = unused_set_fan_power,
+  .set_ir_power = unused_set_ir_power,
+  .set_phone_power = unused_set_phone_power,
+  .set_clock_source_mode = unused_set_clock_source_mode,
+  .set_siren = unused_set_siren
 };

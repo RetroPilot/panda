@@ -54,8 +54,8 @@ ENV LC_ALL en_US.UTF-8
 RUN curl -L https://github.com/pyenv/pyenv-installer/raw/master/bin/pyenv-installer | bash
 
 ENV PATH="/root/.pyenv/bin:/root/.pyenv/shims:${PATH}"
-RUN pyenv install 3.8.5
-RUN pyenv global 3.8.5
+RUN pyenv install 3.8.10
+RUN pyenv global 3.8.10
 RUN pyenv rehash
 
 RUN pip install --upgrade pip==18.0
@@ -63,11 +63,11 @@ RUN pip install --upgrade pip==18.0
 COPY requirements.txt /tmp/
 RUN pip install -r /tmp/requirements.txt
 
-RUN mkdir -p /home/batman
-ENV HOME /home/batman
-
 ENV PYTHONPATH /tmp:$PYTHONPATH
 
-RUN cd /tmp && git clone https://github.com/commaai/panda_jungle.git
+RUN cd /tmp && git clone https://github.com/commaai/panda_jungle.git && \
+    cd panda_jungle && \
+    git fetch && \
+    git checkout 7b7197c605915ac34f3d62f314edd84e2e78a759
 
 ADD ./panda.tar.gz /tmp/panda

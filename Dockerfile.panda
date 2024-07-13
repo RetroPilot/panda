@@ -26,7 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libusb-1.0-0 \
     libzmq3-dev \
     locales \
+    opencl-headers \
+    ocl-icd-opencl-dev \
     make \
+    patch \
     pkg-config \
     python \
     python-dev \
@@ -42,10 +45,12 @@ ENV LC_ALL en_US.UTF-8
 
 RUN curl -L https://github.com/pyenv/pyenv-installer/raw/master/bin/pyenv-installer | bash
 ENV PATH="/root/.pyenv/bin:/root/.pyenv/shims:${PATH}"
+ENV OPENPILOT_REF="1b0167ce24afb037b36464c40f9c5e0d657e77d9"
+ENV OPENDBC_REF="3fb3f5e82129ad76232bcdca10632ed0566b20f8"
 
 COPY requirements.txt /tmp/
-RUN pyenv install 3.8.5 && \
-    pyenv global 3.8.5 && \
+RUN pyenv install 3.8.10 && \
+    pyenv global 3.8.10 && \
     pyenv rehash && \
     pip install --no-cache-dir -r /tmp/requirements.txt
 
@@ -53,22 +58,26 @@ RUN cd /tmp && \
     git clone https://github.com/danmar/cppcheck.git && \
     cd cppcheck && \
     git fetch && \
-    git checkout e46191e6e809272d8b34feca8999ee413f716b80 && \
+    git checkout e1cff1d1ef92f6a1c6962e0e4153b7353ccad04c && \
     FILESDIR=/usr/share/cppcheck make -j4 install
 
 RUN cd /tmp && \
     git clone https://github.com/commaai/openpilot.git tmppilot || true && \
     cd /tmp/tmppilot && \
     git fetch && \
-    git checkout 5463469f71e7861ccfbbd4d09b8e4ae56b8d3e45 && \
-    git submodule update --init cereal opendbc && \
+    git checkout $OPENPILOT_REF && \
+    git submodule update --init cereal opendbc rednose_repo && \
+    git -C opendbc fetch && \
+    git -C opendbc checkout $OPENDBC_REF && \
+    git -C opendbc reset --hard HEAD && \
+    git -C opendbc clean -xfd && \
     mkdir /tmp/openpilot && \
-    cp -pR SConstruct site_scons/ tools/ selfdrive/ common/ cereal/ opendbc/ /tmp/openpilot && \
+    cp -pR SConstruct site_scons/ tools/ selfdrive/ system/ common/ cereal/ opendbc/ rednose/ third_party/ /tmp/openpilot && \
     rm -rf /tmp/tmppilot
 
 RUN cd /tmp/openpilot && \
     pip install --no-cache-dir -r opendbc/requirements.txt && \
-    pip install --no-cache-dir --upgrade aenum lru-dict pycurl tenacity atomicwrites scons
+    pip install --no-cache-dir --upgrade aenum lru-dict pycurl tenacity atomicwrites serial smbus2 scons
 
 COPY . /tmp/openpilot/panda
 RUN rm -rf /tmp/openpilot/panda/.git

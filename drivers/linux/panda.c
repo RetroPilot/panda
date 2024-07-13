@@ -17,6 +17,7 @@
 #include <linux/module.h>           // Core header for loading LKMs into the kernel
 #include <linux/netdevice.h>
 #include <linux/usb.h>
+#include <linux/version.h>
 
 /* vendor and product id */
 #define PANDA_MODULE_NAME "panda"
@@ -181,7 +182,7 @@ static void panda_usb_write_bulk_callback(struct urb *urb)
   netdev->stats.tx_packets++;
   netdev->stats.tx_bytes += ctx->dlc;
 
-  can_get_echo_skb(netdev, ctx->ndx);
+  can_get_echo_skb(netdev, ctx->ndx, NULL);
 
   if (urb->status)
     netdev_info(netdev, "Tx URB aborted (%d)\n", urb->status);
@@ -283,7 +284,11 @@ static void panda_usb_process_can_rx(struct panda_dev_priv *priv_dev,
   //if (msg->dlc & MCBA_DLC_RTR_MASK)
   //  cf->can_id |= CAN_RTR_FLAG;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)
   cf->can_dlc = get_can_dlc(msg->bus_dat_len & PANDA_DLC_MASK);
+#else
+  cf->can_dlc = can_cc_dlc2len(msg->bus_dat_len & PANDA_DLC_MASK);
+#endif
 
   memcpy(cf->data, msg->data, cf->can_dlc);
 
@@ -454,7 +459,7 @@ static netdev_tx_t panda_usb_start_xmit(struct sk_buff *skb,
 
   //Warning: cargo cult. Can't tell what this is for, but it is
   //everywhere and encouraged in the documentation.
-  can_put_echo_skb(skb, priv_inf->netdev, ctx->ndx);
+  can_put_echo_skb(skb, priv_inf->netdev, ctx->ndx, NULL);
 
   if(cf->can_id & CAN_EFF_FLAG){
     usb_msg.rir = cpu_to_le32(((cf->can_id & 0x1FFFFFFF) << 3) |
@@ -479,9 +484,9 @@ static netdev_tx_t panda_usb_start_xmit(struct sk_buff *skb,
   return NETDEV_TX_OK;
 
  xmit_failed:
-  can_free_echo_skb(priv_inf->netdev, ctx->ndx);
+  can_free_echo_skb(priv_inf->netdev, ctx->ndx, NULL);
   panda_usb_free_ctx(ctx);
-  dev_kfree_skb(skb);
+  dev_kfree_skb_any(skb);
   stats->tx_dropped++;
 
   return NETDEV_TX_OK;

@@ -41,6 +41,18 @@ jobs:
       - name: Build pedal STM image and bootstub
         run: $RUN "cd /tmp/openpilot/panda && PEDAL=1 scons"
 
+  unit_tests:
+    name: unit tests
+    runs-on: ubuntu-20.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build Docker image
+        run: eval "$BUILD"
+      - name: Test pack/unpack for USB protocol
+        run: $RUN "cd /tmp/openpilot/panda/tests/usbprotocol &&
+                   python -m unittest discover ."
+
   safety:
     name: safety
     runs-on: ubuntu-20.04
@@ -53,7 +65,7 @@ jobs:
         run: |
           $RUN "cd /tmp/openpilot && \
                 scons -c && \
-                scons -j$(nproc) -i opendbc/ cereal/ && \
+                scons -j$(nproc) opendbc/ cereal/ && \
                 cd panda/tests/safety && \
                 ./test.sh"
 
@@ -66,7 +78,9 @@ jobs:
       - name: Build Docker image
         run: eval "$BUILD"
       - name: Run safety replay
-        run: $RUN "cd /tmp/openpilot/panda/tests/safety_replay && ./test_safety_replay.py"
+        run: $RUN "cd /tmp/openpilot/panda/tests/safety_replay &&
+                   scons -u --test .. &&
+                   ./test_safety_replay.py"
 
   misra:
     name: misra c2012
@@ -83,13 +97,13 @@ jobs:
       - uses: actions/upload-artifact@v2
         if: always()
         with:
-          name: cppcheck.txt
-          path: /tmp/misra/cppcheck_output.txt
+          name: cppcheck_output
+          path: /tmp/misra/cppcheck_*_output.txt
       - uses: actions/upload-artifact@v2
         if: always()
         with:
-          name: misra.txt
-          path: /tmp/misra/misra_output.txt
+          name: misra_output
+          path: /tmp/misra/misra_*_output.txt
 
   python_linter:
     name: python linter
@@ -101,4 +115,4 @@ jobs:
         run: eval "$BUILD"
       - name: Run static analysis
         run: |
-          $RUN "cd /tmp/openpilot/panda && git init && git add -A && MYPYPATH=/tmp/openpilot pre-commit run --all"
+          $RUN "cd /tmp/openpilot/panda && git init && git add -A && pre-commit run --all"

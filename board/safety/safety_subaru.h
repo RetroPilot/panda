@@ -13,37 +13,39 @@ const int SUBARU_L_DRIVER_TORQUE_ALLOWANCE = 75;
 const int SUBARU_L_DRIVER_TORQUE_FACTOR = 10;
 
 const CanMsg SUBARU_TX_MSGS[] = {{0x122, 0, 8}, {0x221, 0, 8}, {0x322, 0, 8}};
-const int SUBARU_TX_MSGS_LEN = sizeof(SUBARU_TX_MSGS) / sizeof(SUBARU_TX_MSGS[0]);
+#define SUBARU_TX_MSGS_LEN (sizeof(SUBARU_TX_MSGS) / sizeof(SUBARU_TX_MSGS[0]))
 
-AddrCheckStruct subaru_rx_checks[] = {
-  {.msg = {{ 0x40, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 10000U}}},
-  {.msg = {{0x119, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 20000U}}},
-  {.msg = {{0x139, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 20000U}}},
-  {.msg = {{0x13a, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 20000U}}},
-  {.msg = {{0x240, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 50000U}}},
+AddrCheckStruct subaru_addr_checks[] = {
+  {.msg = {{ 0x40, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 10000U}, { 0 }, { 0 }}},
+  {.msg = {{0x119, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 20000U}, { 0 }, { 0 }}},
+  {.msg = {{0x13a, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 20000U}, { 0 }, { 0 }}},
+  {.msg = {{0x13c, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 20000U}, { 0 }, { 0 }}},
+  {.msg = {{0x240, 0, 8, .check_checksum = true, .max_counter = 15U, .expected_timestep = 50000U}, { 0 }, { 0 }}},
 };
-const int SUBARU_RX_CHECK_LEN = sizeof(subaru_rx_checks) / sizeof(subaru_rx_checks[0]);
+#define SUBARU_ADDR_CHECK_LEN (sizeof(subaru_addr_checks) / sizeof(subaru_addr_checks[0]))
+addr_checks subaru_rx_checks = {subaru_addr_checks, SUBARU_ADDR_CHECK_LEN};
 
 const CanMsg SUBARU_L_TX_MSGS[] = {{0x161, 0, 8}, {0x164, 0, 8}};
-const int SUBARU_L_TX_MSGS_LEN = sizeof(SUBARU_L_TX_MSGS) / sizeof(SUBARU_L_TX_MSGS[0]);
+#define SUBARU_L_TX_MSGS_LEN (sizeof(SUBARU_L_TX_MSGS) / sizeof(SUBARU_L_TX_MSGS[0]))
 
 // TODO: do checksum and counter checks after adding the signals to the outback dbc file
-AddrCheckStruct subaru_l_rx_checks[] = {
-  {.msg = {{0x140, 0, 8, .expected_timestep = 10000U}}},
-  {.msg = {{0x371, 0, 8, .expected_timestep = 20000U}}},
-  {.msg = {{0x144, 0, 8, .expected_timestep = 50000U}}},
+AddrCheckStruct subaru_l_addr_checks[] = {
+  {.msg = {{0x140, 0, 8, .expected_timestep = 10000U}, { 0 }, { 0 }}},
+  {.msg = {{0x371, 0, 8, .expected_timestep = 20000U}, { 0 }, { 0 }}},
+  {.msg = {{0x144, 0, 8, .expected_timestep = 50000U}, { 0 }, { 0 }}},
 };
-const int SUBARU_L_RX_CHECK_LEN = sizeof(subaru_l_rx_checks) / sizeof(subaru_l_rx_checks[0]);
+#define SUBARU_L_ADDR_CHECK_LEN (sizeof(subaru_l_addr_checks) / sizeof(subaru_l_addr_checks[0]))
+addr_checks subaru_l_rx_checks = {subaru_l_addr_checks, SUBARU_L_ADDR_CHECK_LEN};
 
-static uint8_t subaru_get_checksum(CAN_FIFOMailBox_TypeDef *to_push) {
+static uint32_t subaru_get_checksum(CANPacket_t *to_push) {
   return (uint8_t)GET_BYTE(to_push, 0);
 }
 
-static uint8_t subaru_get_counter(CAN_FIFOMailBox_TypeDef *to_push) {
-  return (uint8_t)(GET_BYTE(to_push, 1) & 0xF);
+static uint8_t subaru_get_counter(CANPacket_t *to_push) {
+  return (uint8_t)(GET_BYTE(to_push, 1) & 0xFU);
 }
 
-static uint8_t subaru_compute_checksum(CAN_FIFOMailBox_TypeDef *to_push) {
+static uint32_t subaru_compute_checksum(CANPacket_t *to_push) {
   int addr = GET_ADDR(to_push);
   int len = GET_LEN(to_push);
   uint8_t checksum = (uint8_t)(addr) + (uint8_t)((unsigned int)(addr) >> 8U);
@@ -53,23 +55,23 @@ static uint8_t subaru_compute_checksum(CAN_FIFOMailBox_TypeDef *to_push) {
   return checksum;
 }
 
-static int subaru_rx_hook(CAN_FIFOMailBox_TypeDef *to_push) {
+static int subaru_rx_hook(CANPacket_t *to_push) {
 
-  bool valid = addr_safety_check(to_push, subaru_rx_checks, SUBARU_RX_CHECK_LEN,
+  bool valid = addr_safety_check(to_push, &subaru_rx_checks,
                             subaru_get_checksum, subaru_compute_checksum, subaru_get_counter);
 
-  if (valid && (GET_BUS(to_push) == 0)) {
+  if (valid && (GET_BUS(to_push) == 0U)) {
     int addr = GET_ADDR(to_push);
     if (addr == 0x119) {
       int torque_driver_new;
-      torque_driver_new = ((GET_BYTES_04(to_push) >> 16) & 0x7FF);
+      torque_driver_new = ((GET_BYTES_04(to_push) >> 16) & 0x7FFU);
       torque_driver_new = -1 * to_signed(torque_driver_new, 11);
       update_sample(&torque_driver, torque_driver_new);
     }
 
     // enter controls on rising edge of ACC, exit controls on ACC off
     if (addr == 0x240) {
-      int cruise_engaged = ((GET_BYTES_48(to_push) >> 9) & 1);
+      int cruise_engaged = ((GET_BYTES_48(to_push) >> 9) & 1U);
       if (cruise_engaged && !cruise_engaged_prev) {
         controls_allowed = 1;
       }
@@ -81,18 +83,17 @@ static int subaru_rx_hook(CAN_FIFOMailBox_TypeDef *to_push) {
 
     // sample wheel speed, averaging opposite corners
     if (addr == 0x13a) {
-      int subaru_speed = (GET_BYTES_04(to_push) >> 12) & 0x1FFF;  // FR
-      subaru_speed += (GET_BYTES_48(to_push) >> 6) & 0x1FFF;  // RL
+      int subaru_speed = ((GET_BYTES_04(to_push) >> 12) & 0x1FFFU) + ((GET_BYTES_48(to_push) >> 6) & 0x1FFFU);  // FR + RL
       subaru_speed /= 2;
       vehicle_moving = subaru_speed > SUBARU_STANDSTILL_THRSLD;
     }
 
-    if (addr == 0x139) {
-      brake_pressed = (GET_BYTES_48(to_push) & 0xFFF0) > 0;
+    if (addr == 0x13c) {
+      brake_pressed = ((GET_BYTE(to_push, 7) >> 6) & 1U);
     }
 
     if (addr == 0x40) {
-      gas_pressed = GET_BYTE(to_push, 4) != 0;
+      gas_pressed = GET_BYTE(to_push, 4) != 0U;
     }
 
     generic_rx_checks((addr == 0x122));
@@ -100,12 +101,11 @@ static int subaru_rx_hook(CAN_FIFOMailBox_TypeDef *to_push) {
   return valid;
 }
 
-static int subaru_legacy_rx_hook(CAN_FIFOMailBox_TypeDef *to_push) {
+static int subaru_legacy_rx_hook(CANPacket_t *to_push) {
 
-  bool valid = addr_safety_check(to_push, subaru_l_rx_checks, SUBARU_L_RX_CHECK_LEN,
-                            NULL, NULL, NULL);
+  bool valid = addr_safety_check(to_push, &subaru_l_rx_checks, NULL, NULL, NULL);
 
-  if (valid && (GET_BUS(to_push) == 0)) {
+  if (valid && (GET_BUS(to_push) == 0U)) {
     int addr = GET_ADDR(to_push);
     if (addr == 0x371) {
       int torque_driver_new;
@@ -116,7 +116,7 @@ static int subaru_legacy_rx_hook(CAN_FIFOMailBox_TypeDef *to_push) {
 
     // enter controls on rising edge of ACC, exit controls on ACC off
     if (addr == 0x144) {
-      int cruise_engaged = ((GET_BYTES_48(to_push) >> 17) & 1);
+      int cruise_engaged = ((GET_BYTES_48(to_push) >> 17) & 1U);
       if (cruise_engaged && !cruise_engaged_prev) {
         controls_allowed = 1;
       }
@@ -128,18 +128,17 @@ static int subaru_legacy_rx_hook(CAN_FIFOMailBox_TypeDef *to_push) {
 
     // sample wheel speed, averaging opposite corners
     if (addr == 0xD4) {
-      int subaru_speed = (GET_BYTES_04(to_push) >> 16) & 0xFFFF;  // FR
-      subaru_speed += GET_BYTES_48(to_push) & 0xFFFF;  // RL
+      int subaru_speed = ((GET_BYTES_04(to_push) >> 16) & 0xFFFFU) + (GET_BYTES_48(to_push) & 0xFFFFU);  // FR + RL
       subaru_speed /= 2;
       vehicle_moving = subaru_speed > SUBARU_STANDSTILL_THRSLD;
     }
 
     if (addr == 0xD1) {
-      brake_pressed = ((GET_BYTES_04(to_push) >> 16) & 0xFF) > 0;
+      brake_pressed = ((GET_BYTES_04(to_push) >> 16) & 0xFFU) > 0U;
     }
 
     if (addr == 0x140) {
-      gas_pressed = GET_BYTE(to_push, 0) != 0;
+      gas_pressed = GET_BYTE(to_push, 0) != 0U;
     }
 
     generic_rx_checks((addr == 0x164));
@@ -147,7 +146,9 @@ static int subaru_legacy_rx_hook(CAN_FIFOMailBox_TypeDef *to_push) {
   return valid;
 }
 
-static int subaru_tx_hook(CAN_FIFOMailBox_TypeDef *to_send) {
+static int subaru_tx_hook(CANPacket_t *to_send, bool longitudinal_allowed) {
+  UNUSED(longitudinal_allowed);
+
   int tx = 1;
   int addr = GET_ADDR(to_send);
 
@@ -155,15 +156,11 @@ static int subaru_tx_hook(CAN_FIFOMailBox_TypeDef *to_send) {
     tx = 0;
   }
 
-  if (relay_malfunction) {
-    tx = 0;
-  }
-
   // steer cmd checks
   if (addr == 0x122) {
-    int desired_torque = ((GET_BYTES_04(to_send) >> 16) & 0x1FFF);
+    int desired_torque = ((GET_BYTES_04(to_send) >> 16) & 0x1FFFU);
     bool violation = 0;
-    uint32_t ts = TIM2->CNT;
+    uint32_t ts = microsecond_timer_get();
 
     desired_torque = -1 * to_signed(desired_torque, 13);
 
@@ -211,7 +208,9 @@ static int subaru_tx_hook(CAN_FIFOMailBox_TypeDef *to_send) {
   return tx;
 }
 
-static int subaru_legacy_tx_hook(CAN_FIFOMailBox_TypeDef *to_send) {
+static int subaru_legacy_tx_hook(CANPacket_t *to_send, bool longitudinal_allowed) {
+  UNUSED(longitudinal_allowed);
+
   int tx = 1;
   int addr = GET_ADDR(to_send);
 
@@ -219,15 +218,11 @@ static int subaru_legacy_tx_hook(CAN_FIFOMailBox_TypeDef *to_send) {
     tx = 0;
   }
 
-  if (relay_malfunction) {
-    tx = 0;
-  }
-
   // steer cmd checks
   if (addr == 0x164) {
-    int desired_torque = ((GET_BYTES_04(to_send) >> 8) & 0x1FFF);
+    int desired_torque = ((GET_BYTES_04(to_send) >> 8) & 0x1FFFU);
     bool violation = 0;
-    uint32_t ts = TIM2->CNT;
+    uint32_t ts = microsecond_timer_get();
 
     desired_torque = -1 * to_signed(desired_torque, 13);
 
@@ -275,67 +270,71 @@ static int subaru_legacy_tx_hook(CAN_FIFOMailBox_TypeDef *to_send) {
   return tx;
 }
 
-static int subaru_fwd_hook(int bus_num, CAN_FIFOMailBox_TypeDef *to_fwd) {
+static int subaru_fwd_hook(int bus_num, CANPacket_t *to_fwd) {
   int bus_fwd = -1;
 
-  if (!relay_malfunction) {
-    if (bus_num == 0) {
-      bus_fwd = 2;  // Camera CAN
-    }
-    if (bus_num == 2) {
-      // Global platform
-      // 0x122 ES_LKAS
-      // 0x221 ES_Distance
-      // 0x322 ES_LKAS_State
-      int addr = GET_ADDR(to_fwd);
-      int block_msg = ((addr == 0x122) || (addr == 0x221) || (addr == 0x322));
-      if (!block_msg) {
-        bus_fwd = 0;  // Main CAN
-      }
+  if (bus_num == 0) {
+    bus_fwd = 2;  // Camera CAN
+  }
+
+  if (bus_num == 2) {
+    // Global platform
+    // 0x122 ES_LKAS
+    // 0x221 ES_Distance
+    // 0x322 ES_LKAS_State
+    int addr = GET_ADDR(to_fwd);
+    int block_msg = ((addr == 0x122) || (addr == 0x221) || (addr == 0x322));
+    if (!block_msg) {
+      bus_fwd = 0;  // Main CAN
     }
   }
-  // fallback to do not forward
+
   return bus_fwd;
 }
 
-static int subaru_legacy_fwd_hook(int bus_num, CAN_FIFOMailBox_TypeDef *to_fwd) {
+static int subaru_legacy_fwd_hook(int bus_num, CANPacket_t *to_fwd) {
   int bus_fwd = -1;
 
-  if (!relay_malfunction) {
-    if (bus_num == 0) {
-      bus_fwd = 2;  // Camera CAN
-    }
-    if (bus_num == 2) {
-      // Preglobal platform
-      // 0x161 is ES_CruiseThrottle
-      // 0x164 is ES_LKAS
-      int addr = GET_ADDR(to_fwd);
-      int block_msg = ((addr == 0x161) || (addr == 0x164));
-      if (!block_msg) {
-        bus_fwd = 0;  // Main CAN
-      }
+  if (bus_num == 0) {
+    bus_fwd = 2;  // Camera CAN
+  }
+
+  if (bus_num == 2) {
+    // Preglobal platform
+    // 0x161 is ES_CruiseThrottle
+    // 0x164 is ES_LKAS
+    int addr = GET_ADDR(to_fwd);
+    int block_msg = ((addr == 0x161) || (addr == 0x164));
+    if (!block_msg) {
+      bus_fwd = 0;  // Main CAN
     }
   }
-  // fallback to do not forward
+
   return bus_fwd;
+}
+
+static const addr_checks* subaru_init(uint16_t param) {
+  UNUSED(param);
+  return &subaru_rx_checks;
 }
 
 const safety_hooks subaru_hooks = {
-  .init = nooutput_init,
+  .init = subaru_init,
   .rx = subaru_rx_hook,
   .tx = subaru_tx_hook,
   .tx_lin = nooutput_tx_lin_hook,
   .fwd = subaru_fwd_hook,
-  .addr_check = subaru_rx_checks,
-  .addr_check_len = sizeof(subaru_rx_checks) / sizeof(subaru_rx_checks[0]),
 };
 
+static const addr_checks* subaru_legacy_init(uint16_t param) {
+  UNUSED(param);
+  return &subaru_l_rx_checks;
+}
+
 const safety_hooks subaru_legacy_hooks = {
-  .init = nooutput_init,
+  .init = subaru_legacy_init,
   .rx = subaru_legacy_rx_hook,
   .tx = subaru_legacy_tx_hook,
   .tx_lin = nooutput_tx_lin_hook,
   .fwd = subaru_legacy_fwd_hook,
-  .addr_check = subaru_l_rx_checks,
-  .addr_check_len = sizeof(subaru_l_rx_checks) / sizeof(subaru_l_rx_checks[0]),
 };

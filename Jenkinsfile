@@ -1,13 +1,7 @@
 pipeline {
   agent any
   environment {
-    AUTHOR = """${sh(
-                returnStdout: true,
-                script: "git --no-pager show -s --format='%an' ${GIT_COMMIT}"
-             ).trim()}"""
-
     DOCKER_IMAGE_TAG = "panda:build-${env.GIT_COMMIT}"
-    DOCKER_NAME = "panda-test-${env.GIT_COMMIT}"
   }
   stages {
     stage('Build Docker Image') {
@@ -20,41 +14,53 @@ pipeline {
         }
       }
     }
-    stage('Test Dev Build') {
+    stage('PEDAL tests') {
       steps {
-        lock(resource: "Pandas", inversePrecedence: true, quantity: 1){
-          timeout(time: 60, unit: 'MINUTES') {
+        lock(resource: "pedal", inversePrecedence: true, quantity: 1) {
+          timeout(time: 10, unit: 'MINUTES') {
             script {
-              sh "docker run --name ${env.DOCKER_NAME} --privileged --volume /dev/bus/usb:/dev/bus/usb --volume /var/run/dbus:/var/run/dbus --net host ${env.DOCKER_IMAGE_TAG} bash -c 'cd /tmp/panda; scons; ./run_automated_tests.sh'"
-              sh "docker cp ${env.DOCKER_NAME}:/tmp/panda/nosetests.xml test_results_dev.xml"
-              sh "docker rm ${env.DOCKER_NAME}"
+              sh "docker run --rm --privileged \
+                    --volume /dev/bus/usb:/dev/bus/usb \
+                    --volume /var/run/dbus:/var/run/dbus \
+                    --net host \
+                    ${env.DOCKER_IMAGE_TAG} \
+                    bash -c 'cd /tmp/panda && PEDAL_JUNGLE=058010800f51363038363036 python ./tests/pedal/test_pedal.py'"
             }
           }
         }
       }
     }
-    stage('Test EON Build') {
+    stage('CANFD tests') {
       steps {
-        lock(resource: "Pandas", inversePrecedence: true, quantity: 1){
-          timeout(time: 60, unit: 'MINUTES') {
+        lock(resource: "pedal", inversePrecedence: true, quantity: 1) {
+          timeout(time: 10, unit: 'MINUTES') {
             script {
-              sh "docker run --name ${env.DOCKER_NAME} --privileged --volume /dev/bus/usb:/dev/bus/usb --volume /var/run/dbus:/var/run/dbus --net host ${env.DOCKER_IMAGE_TAG} bash -c 'touch /EON; cd /tmp/panda; scons; ./run_automated_tests.sh'"
-              sh "docker cp ${env.DOCKER_NAME}:/tmp/panda/nosetests.xml test_results_eon.xml"
-              sh "docker rm ${env.DOCKER_NAME}"
+              sh "docker run --rm --privileged \
+                    --volume /dev/bus/usb:/dev/bus/usb \
+                    --volume /var/run/dbus:/var/run/dbus \
+                    --net host \
+                    ${env.DOCKER_IMAGE_TAG} \
+                    bash -c 'cd /tmp/panda && ./board/build_all.sh && JUNGLE=058010800f51363038363036 H7_PANDAS_EXCLUDE=\"080021000c51303136383232\" python ./tests/canfd/test_ci_canfd.py'"
             }
           }
         }
       }
     }
-  }
-  post {
-    failure {
-      script {
-        sh "docker rm ${env.DOCKER_NAME} || true"
+    stage('HITL tests') {
+      steps {
+        lock(resource: "pandas", inversePrecedence: true, quantity: 1) {
+          timeout(time: 20, unit: 'MINUTES') {
+            script {
+              sh "docker run --rm --privileged \
+                    --volume /dev/bus/usb:/dev/bus/usb \
+                    --volume /var/run/dbus:/var/run/dbus \
+                    --net host \
+                    ${env.DOCKER_IMAGE_TAG} \
+                    bash -c 'cd /tmp/panda && ./board/build_all.sh && PANDAS_JUNGLE=23002d000851393038373731 PANDAS_EXCLUDE=\"1d0002000c51303136383232 2f002e000c51303136383232\" ./tests/automated/test.sh'"
+            }
+          }
+        }
       }
-    }
-    always {
-      junit "test_results*.xml"
     }
   }
 }

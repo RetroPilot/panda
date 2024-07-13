@@ -3,6 +3,7 @@ import time
 import random
 import threading
 from panda import Panda
+from collections import defaultdict
 from nose.tools import assert_equal, assert_less, assert_greater
 from .helpers import panda_jungle, start_heartbeat_thread, reset_pandas, time_many_sends, test_all_pandas, test_all_gen2_pandas, clear_can_buffers, panda_connect_and_init
 
@@ -25,7 +26,7 @@ def test_send_recv(p):
     busses = [0, 1, 2]
 
     for bus in busses:
-      for speed in [100, 250, 500, 750, 1000]:
+      for speed in [10, 20, 50, 100, 125, 250, 500, 1000]:
         p_send.set_can_speed_kbps(bus, speed)
         p_recv.set_can_speed_kbps(bus, speed)
         time.sleep(0.05)
@@ -66,8 +67,8 @@ def test_latency(p):
     p_send.set_can_loopback(False)
     p_recv.set_can_loopback(False)
 
-    p_send.set_can_speed_kbps(0, 100)
-    p_recv.set_can_speed_kbps(0, 100)
+    p_send.set_can_speed_kbps(0, 500)
+    p_recv.set_can_speed_kbps(0, 500)
     time.sleep(0.05)
 
     p_send.can_send_many([(0x1ba, 0, b"testmsg", 0)] * 10)
@@ -78,7 +79,7 @@ def test_latency(p):
     busses = [0, 1, 2]
 
     for bus in busses:
-      for speed in [100, 250, 500, 750, 1000]:
+      for speed in [10, 20, 50, 100, 125, 250, 500, 1000]:
         p_send.set_can_speed_kbps(bus, speed)
         p_recv.set_can_speed_kbps(bus, speed)
         time.sleep(0.1)
@@ -151,7 +152,7 @@ def test_latency(p):
 @test_all_gen2_pandas
 @panda_connect_and_init
 def test_gen2_loopback(p):
-  def test(p_send, p_recv):
+  def test(p_send, p_recv, address=None):
     for bus in range(4):
       obd = False
       if bus == 3:
@@ -163,7 +164,7 @@ def test_gen2_loopback(p):
       clear_can_buffers(p_recv)
 
       # Send a random string
-      addr = random.randint(1, 2000)
+      addr = address if address else random.randint(1, 2000)
       string = b"test" + os.urandom(4)
       p_send.set_obd(obd)
       p_recv.set_obd(obd)
@@ -182,7 +183,7 @@ def test_gen2_loopback(p):
       # Check bus
       assert content[0][3] == bus
 
-      print("Bus:", bus, "OBD:", obd, "OK")
+      print("Bus:", bus, "address:", addr, "OBD:", obd, "OK")
 
   # Start heartbeat
   start_heartbeat_thread(p)
@@ -195,6 +196,10 @@ def test_gen2_loopback(p):
     # Run tests in both directions
     test(p, panda_jungle)
     test(panda_jungle, p)
+    # Test extended frame address with ELM327 mode
+    p.set_safety_mode(Panda.SAFETY_ELM327)
+    test(p, panda_jungle, 0x18DB33F1)
+    test(panda_jungle, p, 0x18DB33F1)
   except Exception as e:
     # Raise errors again, we don't want them to get lost
     raise e
@@ -210,12 +215,16 @@ def test_bulk_write(p):
 
   def flood_tx(panda):
     print('Sending!')
-    msg = b"\xaa" * 4
-    packet = [[0xaa, None, msg, 0], [0xaa, None, msg, 1], [0xaa, None, msg, 2]] * NUM_MESSAGES_PER_BUS
+    msg = b"\xaa" * 8
+    packet = []
+    # start with many messages on a single bus (higher contention for single TX ring buffer)
+    packet += [[0xaa, None, msg, 0]] * NUM_MESSAGES_PER_BUS
+    # end with many messages on multiple buses
+    packet += [[0xaa, None, msg, 0], [0xaa, None, msg, 1], [0xaa, None, msg, 2]] * NUM_MESSAGES_PER_BUS
 
     # Disable timeout
     panda.can_send_many(packet, timeout=0)
-    print(f"Done sending {3*NUM_MESSAGES_PER_BUS} messages!")
+    print(f"Done sending {4 * NUM_MESSAGES_PER_BUS} messages!")
 
   # Start heartbeat
   start_heartbeat_thread(p)
@@ -231,14 +240,56 @@ def test_bulk_write(p):
   rx = []
   old_len = 0
   start_time = time.time()
-  while time.time() - start_time < 2 or len(rx) > old_len:
+  while time.time() - start_time < 5 or len(rx) > old_len:
     old_len = len(rx)
     rx.extend(panda_jungle.can_recv())
   print(f"Received {len(rx)} messages")
 
   # All messages should have been received
-  if len(rx) != 3 * NUM_MESSAGES_PER_BUS:
-    Exception("Did not receive all messages!")
+  if len(rx) != 4 * NUM_MESSAGES_PER_BUS:
+    raise Exception("Did not receive all messages!")
 
   # Set back to silent mode
   p.set_safety_mode(Panda.SAFETY_SILENT)
+
+@test_all_pandas
+@panda_connect_and_init
+def test_message_integrity(p):
+  start_heartbeat_thread(p)
+
+  clear_can_buffers(p)
+
+  p.set_safety_mode(Panda.SAFETY_ALLOUTPUT)
+  p.set_power_save(False)
+
+  p.set_can_loopback(True)
+
+  n = 250
+  for i in range(n):
+    sent_msgs = defaultdict(set)
+    for _ in range(random.randrange(10)):
+      to_send = []
+      for __ in range(random.randrange(100)):
+        bus = random.randrange(3)
+        addr = random.randrange(1, 1<<29)
+        dat = bytes([random.getrandbits(8) for _ in range(random.randrange(1, 9))])
+        sent_msgs[bus].add((addr, dat))
+        to_send.append([addr, None, dat, bus])
+      p.can_send_many(to_send, timeout=0)
+
+    start_time = time.time()
+    while time.time() - start_time < 2 and any(len(sent_msgs[bus]) for bus in range(3)):
+      recvd = p.can_recv()
+      for msg in recvd:
+        if msg[3] >= 128:
+          k = (msg[0], bytes(msg[2]))
+          assert k in sent_msgs[msg[3]-128], f"message {k} was never sent on bus {bus}"
+          sent_msgs[msg[3]-128].discard(k)
+
+    # if a set isn't empty, messages got dropped
+    for bus in range(3):
+      assert not len(sent_msgs[bus]), f"loop {i}: bus {bus} missing {len(sent_msgs[bus])} messages"
+
+  # Set back to silent mode
+  p.set_safety_mode(Panda.SAFETY_SILENT)
+  print("Got all messages intact")

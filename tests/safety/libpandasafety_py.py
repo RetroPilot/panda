@@ -1,30 +1,25 @@
 import os
-import subprocess
 
 from cffi import FFI
 
 can_dir = os.path.dirname(os.path.abspath(__file__))
 libpandasafety_fn = os.path.join(can_dir, "libpandasafety.so")
-subprocess.check_call([f"scons -u -j{os.cpu_count()} --test ."], shell=True, cwd=can_dir)
 
 ffi = FFI()
 ffi.cdef("""
-typedef struct
-{
-  uint32_t TIR;  /*!< CAN TX mailbox identifier register */
-  uint32_t TDTR; /*!< CAN mailbox data length control and time stamp register */
-  uint32_t TDLR; /*!< CAN mailbox data low register */
-  uint32_t TDHR; /*!< CAN mailbox data high register */
-} CAN_TxMailBox_TypeDef;
+typedef struct {
+  unsigned char reserved : 1;
+  unsigned char bus : 3;
+  unsigned char data_len_code : 4;
+  unsigned char rejected : 1;
+  unsigned char returned : 1;
+  unsigned char extended : 1;
+  unsigned int addr : 29;
+  unsigned char data[64];
+} CANPacket_t;
+""", packed=True)
 
-typedef struct
-{
-  uint32_t RIR;  /*!< CAN receive FIFO mailbox identifier register */
-  uint32_t RDTR; /*!< CAN receive FIFO mailbox data length control and time stamp register */
-  uint32_t RDLR; /*!< CAN receive FIFO mailbox data low register */
-  uint32_t RDHR; /*!< CAN receive FIFO mailbox data high register */
-} CAN_FIFOMailBox_TypeDef;
-
+ffi.cdef("""
 typedef struct
 {
   uint32_t CNT;
@@ -32,15 +27,17 @@ typedef struct
 
 void set_controls_allowed(bool c);
 bool get_controls_allowed(void);
-void set_unsafe_mode(int mode);
-int get_unsafe_mode(void);
+bool get_longitudinal_allowed(void);
+void set_alternative_experience(int mode);
+int get_alternative_experience(void);
 void set_relay_malfunction(bool c);
 bool get_relay_malfunction(void);
 void set_gas_interceptor_detected(bool c);
-bool get_gas_interceptor_detetcted(void);
+bool get_gas_interceptor_detected(void);
 int get_gas_interceptor_prev(void);
 bool get_gas_pressed_prev(void);
 bool get_brake_pressed_prev(void);
+bool get_acc_main_on(void);
 
 void set_torque_meas(int min, int max);
 int get_torque_meas_min(void);
@@ -57,10 +54,13 @@ bool get_vehicle_moving(void);
 int get_hw_type(void);
 void set_timer(uint32_t t);
 
-int safety_rx_hook(CAN_FIFOMailBox_TypeDef *to_send);
-int safety_tx_hook(CAN_FIFOMailBox_TypeDef *to_push);
-int safety_fwd_hook(int bus_num, CAN_FIFOMailBox_TypeDef *to_fwd);
-int set_safety_hooks(uint16_t  mode, int16_t param);
+int safety_rx_hook(CANPacket_t *to_send);
+int safety_tx_hook(CANPacket_t *to_push);
+int safety_fwd_hook(int bus_num, CANPacket_t *to_fwd);
+int set_safety_hooks(uint16_t mode, uint16_t param);
+
+void safety_tick_current_rx_checks();
+bool addr_checks_valid();
 
 void init_tests(void);
 

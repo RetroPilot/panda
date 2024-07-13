@@ -1,8 +1,9 @@
+import os
 import time
 import random
 import _thread
 import faulthandler
-from functools import wraps
+from functools import wraps, partial
 from panda import Panda
 from panda_jungle import PandaJungle  # pylint: disable=import-error
 from nose.tools import assert_equal
@@ -13,14 +14,20 @@ SPEED_NORMAL = 500
 SPEED_GMLAN = 33.3
 BUS_SPEEDS = [(0, SPEED_NORMAL), (1, SPEED_NORMAL), (2, SPEED_NORMAL), (3, SPEED_GMLAN)]
 TIMEOUT = 45
-GEN2_HW_TYPES = [Panda.HW_TYPE_BLACK_PANDA, Panda.HW_TYPE_UNO]
+H7_HW_TYPES = [Panda.HW_TYPE_RED_PANDA]
+GEN2_HW_TYPES = [Panda.HW_TYPE_BLACK_PANDA, Panda.HW_TYPE_UNO] + H7_HW_TYPES
 GPS_HW_TYPES = [Panda.HW_TYPE_GREY_PANDA, Panda.HW_TYPE_BLACK_PANDA, Panda.HW_TYPE_UNO]
+PEDAL_SERIAL = 'none'
+JUNGLE_SERIAL = os.getenv("PANDAS_JUNGLE")
+PANDAS_EXCLUDE = []
+if os.getenv("PANDAS_EXCLUDE"):
+  PANDAS_EXCLUDE = os.getenv("PANDAS_EXCLUDE").strip().split(" ")
 
 # Enable fault debug
 faulthandler.enable(all_threads=False)
 
 # Connect to Panda Jungle
-panda_jungle = PandaJungle()
+panda_jungle = PandaJungle(JUNGLE_SERIAL)
 
 # Find all panda's connected
 _panda_serials = None
@@ -30,10 +37,11 @@ def init_panda_serials():
   panda_jungle.set_panda_power(True)
   time.sleep(5)
   for serial in Panda.list():
-    p = Panda(serial=serial)
-    _panda_serials.append((serial, p.get_type()))
-    p.close()
-  print('Found', str(len(_panda_serials)), 'pandas')
+    if serial not in PANDAS_EXCLUDE:
+      p = Panda(serial=serial)
+      _panda_serials.append((serial, p.get_type()))
+      p.close()
+  print(f"Found {len(_panda_serials)} pandas")
 init_panda_serials()
 
 # Panda providers
@@ -41,10 +49,11 @@ test_all_types = parameterized([
     param(panda_type=Panda.HW_TYPE_WHITE_PANDA),
     param(panda_type=Panda.HW_TYPE_GREY_PANDA),
     param(panda_type=Panda.HW_TYPE_BLACK_PANDA),
-    param(panda_type=Panda.HW_TYPE_UNO)
+    param(panda_type=Panda.HW_TYPE_UNO),
+    param(panda_type=Panda.HW_TYPE_RED_PANDA)
   ])
 test_all_pandas = parameterized(
-    list(map(lambda x: x[0], _panda_serials))  # type: ignore
+    list(map(lambda x: x[0], filter(lambda x: x[0] != PEDAL_SERIAL, _panda_serials)))  # type: ignore
   )
 test_all_gen2_pandas = parameterized(
     list(map(lambda x: x[0], filter(lambda x: x[1] in GEN2_HW_TYPES, _panda_serials)))  # type: ignore
@@ -150,7 +159,10 @@ def start_heartbeat_thread(p):
         break
   _thread.start_new_thread(heartbeat_thread, (p,))
 
-def panda_connect_and_init(fn):
+def panda_connect_and_init(fn=None, clear_can=True):
+  if not fn:
+    return partial(panda_connect_and_init, clear_can=clear_can)
+
   @wraps(fn)
   def wrapper(panda_serials=None, **kwargs):
     # Change panda_serials to a list
@@ -179,7 +191,8 @@ def panda_connect_and_init(fn):
       panda.set_power_save(False)
       for bus, speed in BUS_SPEEDS:
         panda.set_can_speed_kbps(bus, speed)
-      clear_can_buffers(panda)
+      if clear_can:
+        clear_can_buffers(panda)
       panda.set_power_save(False)
 
     try:
