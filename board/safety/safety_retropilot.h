@@ -46,6 +46,9 @@ static int retropilot_rx_hook(CANPacket_t *to_push) {
 //     int addr = GET_ADDR(to_push);
 //     generic_rx_checks((addr == 0x2E4));
 //   }
+
+  // need to gate this behind a CAN msg check
+  controls_allowed = 1;
   if (valid && (GET_BUS(to_push) == 0U)) {
     int addr = GET_ADDR(to_push);
     if (addr == 0x201) {
